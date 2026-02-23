@@ -1,0 +1,46 @@
+{
+  "ollama": {
+    "description": "Ollama (local)",
+    "embedding": {
+      "api_base": "http://localhost:11434/v1",
+      "model": "nomic-embed-text",
+      "api_key_env": "",
+      "dimensions": 768,
+      "batch_size": 10,
+      "query_prefix": "search_query: "
+    }
+  },
+  "openai": {
+    "description": "OpenAI",
+    "embedding": {
+      "api_base": "https://api.openai.com/v1",
+      "model": "text-embedding-3-small",
+      "api_key_env": "OPENAI_API_KEY",
+      "dimensions": 1536,
+      "batch_size": 100,
+      "query_prefix": ""
+    }
+  },
+  "voyage": {
+    "description": "Voyage AI",
+    "embedding": {
+      "api_base": "https://api.voyageai.com/v1",
+      "model": "voyage-code-3",
+      "api_key_env": "VOYAGE_API_KEY",
+      "dimensions": 1024,
+      "batch_size": 50,
+      "query_prefix": ""
+    }
+  },
+  "litellm": {
+    "description": "LiteLLM proxy (Vertex AI, Bedrock, etc.)",
+    "embedding": {
+      "api_base": "http://localhost:4000/v1",
+      "model": "voyage-code-3",
+      "api_key_env": "LITELLM_API_KEY",
+      "dimensions": 1024,
+      "batch_size": 50,
+      "query_prefix": ""
+    }
+  }
+}

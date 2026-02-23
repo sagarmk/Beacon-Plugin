@@ -1,0 +1,23 @@
+{
+  "name": "beacon",
+  "version": "0.1.0",
+  "description": "Beacon — semantic code search for Claude Code",
+  "homepage": "https://github.com/sagarmk/Claude-Code-Beacon-Plugin",
+  "skills": [
+    "./skills/semantic-search"
+  ],
+  "commands": [
+    "./commands/index.md",
+    "./commands/search-code.md",
+    "./commands/index-status.md",
+    "./commands/reindex.md",
+    "./commands/config.md",
+    "./commands/blacklist.md",
+    "./commands/whitelist.md",
+    "./commands/run-indexer.md",
+    "./commands/terminate-indexer.md"
+  ],
+  "agents": [
+    "./agents/code-explorer.md"
+  ]
+}

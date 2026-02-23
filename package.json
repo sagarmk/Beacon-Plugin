@@ -1,0 +1,21 @@
+{
+  "name": "beacon",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Beacon — semantic code search for Claude Code",
+  "scripts": {
+    "sync": "node scripts/sync.js",
+    "search": "node scripts/search.js",
+    "status": "node scripts/status.js",
+    "gc": "node scripts/gc.js",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "picomatch": "^4.0.0",
+    "sqlite-vec": "^0.1.0"
+  },
+  "devDependencies": {
+    "vitest": "^3.0.0"
+  }
+}

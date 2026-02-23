@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Beacon embeddings database (auto-generated per-repo)
+*.db
+*.db-wal
+*.db-shm
+.claude/.beacon/
+.claude/.ccm/
+
+# User-specific Claude settings
+.claude/settings.local.json
+
+# Internal dev artifacts
+reports/
+
+# OS files
+.DS_Store
+Thumbs.db

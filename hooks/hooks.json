@@ -1,0 +1,70 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/grep-nudge.js",
+            "timeout": 5,
+            "description": "Beacon: nudge toward hybrid search when grep is used for queries Beacon handles better"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/sync.js",
+            "timeout": 300,
+            "async": true,
+            "description": "Beacon: sync code embeddings index (full index on first run, diff-based on subsequent)"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/embed-file.js \"$TOOL_INPUT_file_path\"",
+            "timeout": 15,
+            "async": true,
+            "description": "Beacon: re-embed changed file"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/gc.js",
+            "timeout": 10,
+            "async": true,
+            "description": "Beacon: garbage collect embeddings for deleted files after bash commands"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/scripts/status.js --compact-warning",
+            "timeout": 5,
+            "description": "Beacon: inject index status into context before compaction so search capability survives"
+          }
+        ]
+      }
+    ]
+  }
+}
