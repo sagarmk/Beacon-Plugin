@@ -1,6 +1,6 @@
 ---
 name: semantic-code-search
-description: "Primary code search for this repo — hybrid search (semantic + keyword + BM25) that outperforms grep on all query types including keyword lookups (98% vs 85% accuracy). Grep is automatically intercepted and redirected to Beacon for most queries. Grep only passes through for: regex patterns, dotted identifiers, path-like patterns, string literal counting, short patterns (<=3 chars), or within-file searches."
+description: "Primary code search for this repo — hybrid search (semantic + keyword + BM25) that outperforms grep on all query types including keyword lookups (98% vs 85% accuracy). Grep is automatically intercepted and redirected to Beacon for most queries. Grep only passes through for: regex patterns, dotted identifiers, path-like patterns, string literal counting, short patterns (<=3 chars), within-file searches, content output mode, quoted string literals, annotations/markers (TODO/FIXME/@param), or URL-like patterns."
 ---
 
 # Hybrid Code Search (Beacon)
@@ -44,6 +44,10 @@ Grep is **denied and redirected** to Beacon unless one of these conditions is me
 | Pattern is <= 3 characters | `fs`, `db` |
 | Dotted identifier | `fs.readFileSync`, `path.join` |
 | Path-like pattern (contains `/` or `\`) | `src/components` |
+| `output_mode` is `"content"` | Viewing matching lines |
+| Quoted string literal | `"use strict"`, `'Content-Type'` |
+| Annotation/marker pattern | `TODO`, `FIXME`, `@param`, `#pragma` |
+| URL-like pattern | `http://`, `localhost:3000` |
 | Beacon index is unhealthy | DB missing, empty, dimension mismatch |
 | Intercept disabled via config | `intercept.enabled: false` |
 

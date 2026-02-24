@@ -59,6 +59,18 @@ if (/\w\.\w/.test(pattern)) process.exit(0);
 // 6. Path-like pattern (contains / or \)
 if (/[/\\]/.test(pattern)) process.exit(0);
 
+// 7. Content output mode — user wants matching lines, not file rankings
+if (outputMode === 'content') process.exit(0);
+
+// 8. Quoted string literals (looking for exact strings in source)
+if (/^["']|["']$/.test(pattern)) process.exit(0);
+
+// 9. Annotations/markers (TODO, FIXME, @param, etc.)
+if (/^[@#]|TODO|FIXME|HACK|XXX|DEPRECATED/.test(pattern)) process.exit(0);
+
+// 10. URL-like patterns
+if (/:\/{2}|localhost/.test(pattern)) process.exit(0);
+
 // --- Health gate: only intercept if Beacon index is healthy ---
 try {
   const { BeaconDatabase } = await import('./lib/db.js');

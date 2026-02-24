@@ -13,6 +13,7 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = process.env.CLAUDE_PLUGIN_ROOT || path.resolve(__dirname, '..');
 const PRETTY = process.argv.includes('--pretty');
+const SHOW_FILES = process.argv.includes('--files');
 
 const config = loadConfig();
 const dbPath = path.join(config.storage.path, 'embeddings.db');
@@ -188,8 +189,8 @@ function prettyDashboard(data) {
   L.push(`${PAD}Avg chunks/file  ${index.avg_chunks_per_file}`);
   L.push(`${PAD}Last sync        ${fmtRel(sync.last_sync)}`);
 
-  // Files
-  if (files.length > 0) {
+  // Files — only shown with --files flag
+  if (SHOW_FILES && files.length > 0) {
     L.push('');
     const max = 20;
     const show = files.slice(0, max);
@@ -206,6 +207,9 @@ function prettyDashboard(data) {
       L.push(`${PAD}${c.dim(p)} ${n} ${w}  ${c.dim(t)}`);
     }
     if (rest > 0) L.push(`${PAD}${c.dim(`...and ${rest} more`)}`);
+  } else if (files.length > 0) {
+    L.push('');
+    L.push(`${PAD}${c.dim(`${data.files_total_count} files indexed — run with --files to list`)}`);
   }
 
   console.log(L.join('\n'));
