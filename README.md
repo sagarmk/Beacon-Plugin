@@ -28,13 +28,16 @@
 ## Quick Start
 
 ```bash
-# 1. Install the plugin
-claude plugin add sagarmk/Claude-Code-Beacon-Plugin
+# 1. Add the Beacon marketplace
+claude plugin marketplace add sagarmk/Claude-Code-Beacon-Plugin
 
-# 2. Pull the default embedding model (local, free)
+# 2. Install the plugin
+claude plugin install beacon@claude-code-beacon-plugin
+
+# 3. Pull the default embedding model (local, free)
 ollama pull nomic-embed-text
 
-# 3. Done — Beacon indexes automatically on your next session
+# 4. Restart Claude Code — Beacon indexes automatically on your next session
 ```
 
 ## Why Beacon?

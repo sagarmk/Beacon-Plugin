@@ -1,9 +1,0 @@
-{
-  "plugins": [
-    {
-      "name": "beacon",
-      "description": "Beacon — semantic code search for Claude Code",
-      "source": "./"
-    }
-  ]
-}

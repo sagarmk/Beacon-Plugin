@@ -1,0 +1,18 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "claude-code-beacon-plugin",
+  "description": "Beacon — semantic code search for Claude Code",
+  "owner": {
+    "name": "sagarmk"
+  },
+  "plugins": [
+    {
+      "name": "beacon",
+      "description": "Beacon — semantic code search for Claude Code",
+      "version": "0.1.0",
+      "source": "./",
+      "category": "development",
+      "homepage": "https://github.com/sagarmk/Claude-Code-Beacon-Plugin"
+    }
+  ]
+}
