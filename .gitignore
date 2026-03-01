@@ -13,6 +13,7 @@ node_modules/
 
 # Internal dev artifacts
 reports/
+TODO.md
 
 # OS files
 .DS_Store

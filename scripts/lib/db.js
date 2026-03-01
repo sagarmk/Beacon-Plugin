@@ -30,6 +30,7 @@ export class BeaconDatabase {
 
   init() {
     this.db.pragma('journal_mode = WAL');
+    this.db.pragma('busy_timeout = 5000');
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS chunks (
@@ -200,12 +201,12 @@ export class BeaconDatabase {
     orphanTransaction(filePath, maxChunkIndex);
   }
 
-  search(queryEmbedding, topK, threshold, queryText, config) {
+  search(queryEmbedding, topK, threshold, queryText, config, pathPrefix) {
     const hybrid = config?.search?.hybrid;
 
     // Fallback to pure vector search when hybrid is disabled or no config
     if (!hybrid?.enabled || !queryText) {
-      return this._vectorSearch(queryEmbedding, topK, threshold);
+      return this._vectorSearch(queryEmbedding, topK, threshold, pathPrefix);
     }
 
     const wVec = hybrid.weight_vector ?? 0.4;
@@ -215,11 +216,21 @@ export class BeaconDatabase {
 
     // Stage 1: Parallel retrieval
     // Vector search — fetch extra candidates for re-ranking headroom
-    const vecResults = this._vectorSearchRaw(queryEmbedding, topK * 2);
+    const vecResults = this._vectorSearchRaw(queryEmbedding, topK * 2, pathPrefix);
 
-    // FTS search
+    // FTS search (tiered: AND-first for 3+ token queries, OR fallback)
     const ftsQuery = prepareFTSQuery(queryText);
-    const ftsResults = ftsQuery ? this._ftsSearch(ftsQuery, topK * 2) : [];
+    let ftsResults = [];
+    if (ftsQuery) {
+      if (typeof ftsQuery === 'object' && ftsQuery.andQuery) {
+        ftsResults = this._ftsSearch(ftsQuery.andQuery, topK * 2, pathPrefix);
+        if (ftsResults.length === 0) {
+          ftsResults = this._ftsSearch(ftsQuery.orQuery, topK * 2, pathPrefix);
+        }
+      } else {
+        ftsResults = this._ftsSearch(ftsQuery, topK * 2, pathPrefix);
+      }
+    }
 
     // Stage 2: Score fusion — merge candidates into a map by chunk_id
     const candidates = new Map();
@@ -295,6 +306,20 @@ export class BeaconDatabase {
       });
     }
 
+    // File-frequency reranking: files with more matching chunks get a cumulative boost
+    const fileHits = new Map();
+    for (const s of scored) {
+      fileHits.set(s.filePath, (fileHits.get(s.filePath) || 0) + 1);
+    }
+    for (const s of scored) {
+      const hitCount = fileHits.get(s.filePath);
+      if (hitCount > 1) {
+        const freqBoost = Math.min(1 + 0.1 * (hitCount - 1), 1.5);
+        s.score *= freqBoost;
+        if (s._debug) s._debug.fileFreqBoost = freqBoost;
+      }
+    }
+
     // Sort by fused score descending, filter by threshold on similarity (if available), take top K
     return scored
       .sort((a, b) => b.score - a.score)
@@ -303,7 +328,8 @@ export class BeaconDatabase {
   }
 
   // Pure vector search (backward-compatible return format)
-  _vectorSearch(queryEmbedding, topK, threshold) {
+  _vectorSearch(queryEmbedding, topK, threshold, pathPrefix) {
+    const fetchLimit = pathPrefix ? topK * 4 : topK;
     const results = this.db.prepare(`
       SELECT
         chunks_vec.chunk_id,
@@ -317,9 +343,9 @@ export class BeaconDatabase {
       WHERE chunks_vec.embedding MATCH ?
         AND k = ?
       ORDER BY chunks_vec.distance ASC
-    `).all(float32Buffer(queryEmbedding), topK);
+    `).all(float32Buffer(queryEmbedding), fetchLimit);
 
-    return results
+    let mapped = results
       .map(r => ({
         filePath: r.file_path,
         chunkText: r.chunk_text,
@@ -328,10 +354,19 @@ export class BeaconDatabase {
         similarity: 1 - r.distance
       }))
       .filter(r => r.similarity >= threshold);
+
+    if (pathPrefix) {
+      mapped = mapped.filter(r => r.filePath.startsWith(pathPrefix));
+    }
+
+    return mapped.slice(0, topK);
   }
 
   // Vector search returning raw data for fusion
-  _vectorSearchRaw(queryEmbedding, limit) {
+  _vectorSearchRaw(queryEmbedding, limit, pathPrefix) {
+    // sqlite-vec doesn't support WHERE clauses beyond MATCH/k, so we filter post-query
+    // Fetch extra results when path-filtering to ensure enough candidates
+    const fetchLimit = pathPrefix ? limit * 4 : limit;
     const results = this.db.prepare(`
       SELECT
         chunks_vec.chunk_id,
@@ -346,9 +381,9 @@ export class BeaconDatabase {
       WHERE chunks_vec.embedding MATCH ?
         AND k = ?
       ORDER BY chunks_vec.distance ASC
-    `).all(float32Buffer(queryEmbedding), limit);
+    `).all(float32Buffer(queryEmbedding), fetchLimit);
 
-    return results.map(r => ({
+    let mapped = results.map(r => ({
       id: r.id,
       filePath: r.file_path,
       chunkText: r.chunk_text,
@@ -356,25 +391,50 @@ export class BeaconDatabase {
       endLine: r.end_line,
       similarity: 1 - r.distance,
     }));
+
+    if (pathPrefix) {
+      mapped = mapped.filter(r => r.filePath.startsWith(pathPrefix));
+    }
+
+    return mapped.slice(0, limit);
   }
 
   // FTS5 search with BM25 scoring (column weights: chunk_text=10, identifiers=5, file_path=1)
-  _ftsSearch(ftsQuery, limit) {
+  _ftsSearch(ftsQuery, limit, pathPrefix) {
     try {
-      const results = this.db.prepare(`
-        SELECT
-          chunks.id,
-          chunks.file_path,
-          chunks.chunk_text,
-          chunks.start_line,
-          chunks.end_line,
-          chunks_fts.rank AS bm25_rank
-        FROM chunks_fts
-        JOIN chunks ON chunks.id = chunks_fts.rowid
-        WHERE chunks_fts MATCH ?
-        ORDER BY chunks_fts.rank
-        LIMIT ?
-      `).all(ftsQuery, limit);
+      let results;
+      if (pathPrefix) {
+        results = this.db.prepare(`
+          SELECT
+            chunks.id,
+            chunks.file_path,
+            chunks.chunk_text,
+            chunks.start_line,
+            chunks.end_line,
+            chunks_fts.rank AS bm25_rank
+          FROM chunks_fts
+          JOIN chunks ON chunks.id = chunks_fts.rowid
+          WHERE chunks_fts MATCH ?
+            AND chunks.file_path LIKE ?
+          ORDER BY chunks_fts.rank
+          LIMIT ?
+        `).all(ftsQuery, pathPrefix + '%', limit);
+      } else {
+        results = this.db.prepare(`
+          SELECT
+            chunks.id,
+            chunks.file_path,
+            chunks.chunk_text,
+            chunks.start_line,
+            chunks.end_line,
+            chunks_fts.rank AS bm25_rank
+          FROM chunks_fts
+          JOIN chunks ON chunks.id = chunks_fts.rowid
+          WHERE chunks_fts MATCH ?
+          ORDER BY chunks_fts.rank
+          LIMIT ?
+        `).all(ftsQuery, limit);
+      }
 
       return results.map(r => ({
         id: r.id,
@@ -490,11 +550,19 @@ export class BeaconDatabase {
   }
 
   // FTS-only search — no embeddings needed
-  ftsOnlySearch(queryText, topK) {
+  ftsOnlySearch(queryText, topK, pathPrefix) {
     const ftsQuery = prepareFTSQuery(queryText);
     if (!ftsQuery) return [];
 
-    const ftsResults = this._ftsSearch(ftsQuery, topK * 2);
+    let ftsResults;
+    if (typeof ftsQuery === 'object' && ftsQuery.andQuery) {
+      ftsResults = this._ftsSearch(ftsQuery.andQuery, topK * 2, pathPrefix);
+      if (ftsResults.length === 0) {
+        ftsResults = this._ftsSearch(ftsQuery.orQuery, topK * 2, pathPrefix);
+      }
+    } else {
+      ftsResults = this._ftsSearch(ftsQuery, topK * 2, pathPrefix);
+    }
     if (ftsResults.length === 0) return [];
 
     // Normalize BM25 scores

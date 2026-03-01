@@ -156,7 +156,7 @@ Beacon indexes your codebase automatically on session start and re-embeds files 
 
 | Command | Description |
 |---------|-------------|
-| `/search-code` | Hybrid code search — semantic + keyword + BM25 matching |
+| `/search-code` | Hybrid code search — semantic + keyword + BM25 matching. Supports `--path <dir>` to scope results |
 
 #### Index
 
@@ -182,7 +182,9 @@ Beacon also provides a **code-explorer** agent and a **semantic-search** skill t
 <summary><strong>Why Beacon?</strong></summary>
 
 - **Understands your questions** — ask "where is the auth flow?" and get `lib/auth.ts`, not every file containing "auth"
+- **Query expansion** — searches for "auth" automatically find code mentioning "authentication", "authorize", and "login"
 - **Stays in sync automatically** — hooks handle full index, incremental re-embedding on edits, and garbage collection
+- **Resilient** — retries with backoff on transient failures, auto-recovers from DB corruption, debounces GC
 - **Works with any embedding provider** — Ollama (local/free), OpenAI, Voyage AI, LiteLLM, or any OpenAI-compatible API
 - **Gives Claude better context** — slash commands, a code-explorer agent, and a grep-nudge hook for smarter search
 
@@ -228,7 +230,8 @@ Default configuration (`config/beacon.default.json`):
     "exclude": ["node_modules/**", "dist/**", "..."],
     "max_file_size_kb": 500,
     "auto_index": true,
-    "max_files": 10000
+    "max_files": 10000,
+    "concurrency": 4
   },
   "search": {
     "top_k": 10,
@@ -259,6 +262,7 @@ Default configuration (`config/beacon.default.json`):
 | `indexing.exclude` | `node_modules`, `dist`, etc. | Glob patterns to skip |
 | `indexing.max_file_size_kb` | `500` | Skip files larger than this |
 | `indexing.auto_index` | `true` | Auto-index on session start |
+| `indexing.concurrency` | `4` | Number of files to index in parallel |
 | `search.top_k` | `10` | Max results per query |
 | `search.similarity_threshold` | `0.35` | Minimum similarity score |
 | `search.hybrid.enabled` | `true` | Enable hybrid search (set `false` for pure vector) |
@@ -293,7 +297,7 @@ Beacon stores its SQLite database at `.claude/.beacon/embeddings.db` (configurab
 
 ### What if Ollama is down?
 
-Beacon degrades gracefully when the embedding server is unreachable — it never blocks your session.
+Beacon degrades gracefully when the embedding server is unreachable — it never blocks your session. Embedding requests automatically retry with backoff (1s, 4s) before giving up.
 
 | Scenario | Behavior |
 |----------|----------|
@@ -301,6 +305,7 @@ Beacon degrades gracefully when the embedding server is unreachable — it never
 | **Search** | Falls back to keyword-only (BM25) search — still returns results |
 | **File edits** | Re-embedding fails silently, old embeddings are preserved |
 | **Status commands** | Work normally (DB-only, no Ollama needed) |
+| **DB corruption** | Auto-detected and rebuilt on next sync |
 
 Start Ollama at any time and run `/run-indexer` to catch up.
 

@@ -21,6 +21,12 @@ try {
 }
 
 try {
+  // Debounce: skip if last GC was < 60s ago
+  const lastGc = db.getSyncState('last_gc_time');
+  if (lastGc && (Date.now() - new Date(lastGc).getTime()) < 60_000) {
+    process.exit(0);
+  }
+
   const indexedFiles = db.getIndexedFiles();
   let removed = 0;
 
@@ -34,6 +40,8 @@ try {
   if (removed > 0) {
     console.log(`Beacon: garbage collected ${removed} deleted files from index`);
   }
+
+  db.setSyncState('last_gc_time', new Date().toISOString());
 } finally {
   db?.close();
 }

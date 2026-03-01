@@ -25,30 +25,46 @@ export class Embedder {
     const embeddings = [];
 
     for (const batch of batches) {
-      const response = await fetch(`${this.apiBase}/embeddings`, {
-        method: 'POST',
-        signal: AbortSignal.timeout(30_000),
-        headers: {
-          'Content-Type': 'application/json',
-          ...(this.apiKey && { 'Authorization': `Bearer ${this.apiKey}` })
-        },
-        body: JSON.stringify({
-          model: this.model,
-          input: batch,
-          dimensions: this.dimensions
-        })
-      });
-
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`Embedding API error ${response.status}: ${text}`);
-      }
-
-      const data = await response.json();
+      const data = await this._fetchWithRetry(batch);
       embeddings.push(...data.data.map(d => d.embedding));
     }
 
     return embeddings;
+  }
+
+  async _fetchWithRetry(batch, retries = 2, backoffMs = 1000) {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const response = await fetch(`${this.apiBase}/embeddings`, {
+          method: 'POST',
+          signal: AbortSignal.timeout(30_000),
+          headers: {
+            'Content-Type': 'application/json',
+            ...(this.apiKey && { 'Authorization': `Bearer ${this.apiKey}` })
+          },
+          body: JSON.stringify({
+            model: this.model,
+            input: batch,
+            dimensions: this.dimensions
+          })
+        });
+
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(`Embedding API error ${response.status}: ${text}`);
+        }
+
+        return await response.json();
+      } catch (err) {
+        if (attempt < retries) {
+          const delay = backoffMs * Math.pow(4, attempt); // 1s, 4s
+          console.warn(`Beacon: embedding request failed (attempt ${attempt + 1}/${retries + 1}), retrying in ${delay}ms: ${err.message}`);
+          await new Promise(r => setTimeout(r, delay));
+        } else {
+          throw err;
+        }
+      }
+    }
   }
 
   async embedQuery(query) {

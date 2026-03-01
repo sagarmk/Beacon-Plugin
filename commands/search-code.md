@@ -11,8 +11,9 @@ Search the codebase using Beacon hybrid search (semantic embeddings + BM25 keywo
 ## Single query
 1. Run `node ${CLAUDE_PLUGIN_ROOT}/scripts/search.js "$ARGUMENTS"`
 2. Parse the JSON results — each match has `file`, `lines`, `similarity`, `score`, and `preview`
-3. For the top 3 results, read the actual source files at the indicated line ranges
-4. Summarize findings and cite file:line references
+3. Review the `preview` field first — it often contains enough context to answer the query
+4. Only read the actual source files if the preview is insufficient to answer the question
+5. Summarize findings and cite file:line references
 
 ## Multi-query batch
 Pass multiple quoted queries for a single HTTP round-trip:
@@ -24,6 +25,7 @@ Returns `[{query, matches}, ...]` grouped by query.
 ## Options
 - `--top-k N` — number of results (default: 10)
 - `--threshold F` — minimum score cutoff (default: 0.35)
+- `--path <prefix>` — scope results to files under a directory (e.g. `--path src/middleware/`)
 - `--no-hybrid` — disable hybrid scoring, use pure vector search
 
 ## Result fields

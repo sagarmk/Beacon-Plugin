@@ -5,6 +5,7 @@ import { BeaconDatabase } from './db.js';
 import { spawnSync } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { unlinkSync } from 'fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = path.resolve(__dirname, '..', '..');
@@ -13,6 +14,15 @@ export function openDatabase(dbPath, dimensions) {
   try {
     return new BeaconDatabase(dbPath, dimensions);
   } catch (err) {
+    // Auto-recover from DB corruption — the index is fully regenerable
+    if (err.message.includes('database disk image is malformed') || err.message.includes('file is not a database')) {
+      console.warn(`Beacon: database corrupted (${err.message}). Deleting — will rebuild on next sync.`);
+      try { unlinkSync(dbPath); } catch { /* already gone */ }
+      try { unlinkSync(dbPath + '-wal'); } catch { /* no WAL file */ }
+      try { unlinkSync(dbPath + '-shm'); } catch { /* no SHM file */ }
+      return new BeaconDatabase(dbPath, dimensions);
+    }
+
     if (!err.message.includes('NODE_MODULE_VERSION')) throw err;
 
     // Guard against infinite re-exec loop

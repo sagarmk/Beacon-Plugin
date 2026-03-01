@@ -106,33 +106,22 @@ try {
   const stats = db.getStats();
   const lastSyncTime = db.getSyncState('last_sync_time');
 
+  const concurrency = config.indexing.concurrency || 4;
+
   if (stats.fileCount === 0) {
     // ── FIRST RUN: full index ──
     console.log('Beacon: first run detected — indexing entire repo...');
 
     const maxFiles = config.indexing.max_files || 10000;
     const allFiles = getRepoFiles(maxFiles).filter(f => shouldIndex(f, config));
-    let indexed = 0;
-    let failed = 0;
 
     db.setSyncState('sync_total_files', String(allFiles.length));
     db.setSyncState('sync_completed_files', '0');
 
-    for (const filePath of allFiles) {
-      try {
-        db.setSyncState('sync_current_file', filePath);
-        await indexFile(filePath);
-        indexed++;
-        db.setSyncState('sync_completed_files', String(indexed));
-        if (indexed % 50 === 0) console.log(`Beacon: indexed ${indexed}/${allFiles.length} files...`);
-      } catch (err) {
-        console.error(`Beacon: failed to index ${filePath}: ${err.message}`);
-        failed++;
-      }
-    }
+    const result = await indexFilesConcurrently(allFiles, concurrency);
 
-    if (failed > 0) console.warn(`Beacon: ${failed} file(s) failed to index.`);
-    console.log(`Beacon: initial index complete — ${indexed} files, ${db.getStats().chunkCount} chunks`);
+    if (result.failed > 0) console.warn(`Beacon: ${result.failed} file(s) failed to index.`);
+    console.log(`Beacon: initial index complete — ${result.indexed} files, ${db.getStats().chunkCount} chunks`);
   } else {
     // ── INCREMENTAL SYNC: only changed files ──
     const changedFiles = lastSyncTime
@@ -144,35 +133,27 @@ try {
     } else {
       console.log(`Beacon: syncing ${changedFiles.length} changed files...`);
 
-      db.setSyncState('sync_total_files', String(changedFiles.length));
-      db.setSyncState('sync_completed_files', '0');
-      let completedCount = 0;
-      let failed = 0;
-
+      // Handle deletions synchronously, collect files needing re-index
+      const toIndex = [];
       for (const filePath of changedFiles) {
-        db.setSyncState('sync_current_file', filePath);
-
         if (!existsSync(filePath)) {
           db.deleteFileChunks(filePath);
         } else {
-          try {
-            const currentHash = getFileHash(filePath);
-            const indexedHash = db.getFileHash(filePath);
-            if (currentHash !== indexedHash) {
-              await indexFile(filePath);
-            }
-          } catch (err) {
-            console.error(`Beacon: failed to sync ${filePath}: ${err.message}`);
-            failed++;
+          const currentHash = getFileHash(filePath);
+          const indexedHash = db.getFileHash(filePath);
+          if (currentHash !== indexedHash) {
+            toIndex.push(filePath);
           }
         }
-
-        completedCount++;
-        db.setSyncState('sync_completed_files', String(completedCount));
       }
 
-      if (failed > 0) console.warn(`Beacon: ${failed} file(s) failed to sync.`);
-      console.log(`Beacon: sync complete — ${changedFiles.length} files updated`);
+      db.setSyncState('sync_total_files', String(toIndex.length));
+      db.setSyncState('sync_completed_files', '0');
+
+      const result = await indexFilesConcurrently(toIndex, concurrency);
+
+      if (result.failed > 0) console.warn(`Beacon: ${result.failed} file(s) failed to sync.`);
+      console.log(`Beacon: sync complete — ${changedFiles.length} files processed (${result.indexed} re-indexed)`);
     }
   }
 
@@ -195,32 +176,116 @@ try {
 
 // ── Helpers ──
 
-async function indexFile(filePath) {
+/**
+ * Prepare a file for indexing: read, chunk, and extract metadata.
+ * Returns null if the file has no chunks (e.g., empty or binary).
+ */
+function prepareFile(filePath) {
   const content = readFileSync(filePath, 'utf-8');
   const fileHash = getFileHash(filePath);
   const chunks = chunkCode(content, filePath, config);
+  if (chunks.length === 0) return null;
+  return { filePath, fileHash, chunks };
+}
 
-  if (chunks.length === 0) return;
-
-  // Batch embed all chunks for this file
-  const texts = chunks.map(c => c.text);
-  const embeddings = await embedder.embedDocuments(texts);
-
-  // Upsert each chunk with identifiers for FTS
-  for (let i = 0; i < chunks.length; i++) {
-    const identifiers = extractIdentifiers(chunks[i].text);
+/**
+ * Write embedded chunks to DB (serialized — no concurrent DB writes).
+ */
+function commitFileToDb(prepared, embeddings, startIdx) {
+  for (let i = 0; i < prepared.chunks.length; i++) {
+    const identifiers = extractIdentifiers(prepared.chunks[i].text);
     db.upsertChunk(
-      filePath,
-      chunks[i].index,
-      chunks[i].text,
-      chunks[i].startLine,
-      chunks[i].endLine,
-      embeddings[i],
-      fileHash,
+      prepared.filePath,
+      prepared.chunks[i].index,
+      prepared.chunks[i].text,
+      prepared.chunks[i].startLine,
+      prepared.chunks[i].endLine,
+      embeddings[startIdx + i],
+      prepared.fileHash,
       identifiers
     );
   }
+  db.deleteOrphanChunks(prepared.filePath, prepared.chunks.length - 1);
+}
 
-  // Clean up orphan chunks (file got shorter)
-  db.deleteOrphanChunks(filePath, chunks.length - 1);
+/**
+ * Process files concurrently: N files prepare in parallel, chunks batched across files
+ * for efficient embedding API calls, DB writes serialized.
+ */
+async function indexFilesConcurrently(files, concurrency) {
+  let indexed = 0;
+  let failed = 0;
+  const batchSize = config.embedding.batch_size || 10;
+
+  // Process in concurrent windows
+  for (let i = 0; i < files.length; i += concurrency) {
+    const window = files.slice(i, i + concurrency);
+
+    // Prepare files in parallel (read + chunk — CPU-bound, fast)
+    const preparedResults = await Promise.allSettled(
+      window.map(fp => {
+        try {
+          db.setSyncState('sync_current_file', fp);
+          return Promise.resolve(prepareFile(fp));
+        } catch (err) {
+          return Promise.reject(err);
+        }
+      })
+    );
+
+    // Collect successful preparations, track failures
+    const prepared = [];
+    for (let j = 0; j < preparedResults.length; j++) {
+      if (preparedResults[j].status === 'rejected') {
+        console.error(`Beacon: failed to prepare ${window[j]}: ${preparedResults[j].reason?.message}`);
+        failed++;
+      } else if (preparedResults[j].value !== null) {
+        prepared.push(preparedResults[j].value);
+      } else {
+        indexed++; // empty file, counts as processed
+      }
+    }
+
+    if (prepared.length === 0) continue;
+
+    // Cross-file batching: accumulate all chunk texts across files
+    const allTexts = [];
+    const fileOffsets = []; // {prepared, startIdx}
+    for (const p of prepared) {
+      fileOffsets.push({ prepared: p, startIdx: allTexts.length });
+      allTexts.push(...p.chunks.map(c => c.text));
+    }
+
+    // Embed all chunks in one batched call (embedder handles internal sub-batching)
+    try {
+      const allEmbeddings = await embedder.embedDocuments(allTexts);
+
+      // Commit to DB (serialized writes)
+      for (const { prepared: p, startIdx } of fileOffsets) {
+        commitFileToDb(p, allEmbeddings, startIdx);
+        indexed++;
+      }
+    } catch (err) {
+      // If the cross-file batch fails, retry files individually
+      console.warn(`Beacon: batch embedding failed, retrying individually: ${err.message}`);
+      for (const p of prepared) {
+        try {
+          const texts = p.chunks.map(c => c.text);
+          const embeddings = await embedder.embedDocuments(texts);
+          commitFileToDb(p, embeddings, 0);
+          indexed++;
+        } catch (innerErr) {
+          console.error(`Beacon: failed to index ${p.filePath}: ${innerErr.message}`);
+          failed++;
+        }
+      }
+    }
+
+    db.setSyncState('sync_completed_files', String(indexed + failed));
+    if ((indexed + failed) % 50 === 0 || i + concurrency >= files.length) {
+      console.log(`Beacon: indexed ${indexed}/${files.length} files...`);
+    }
+  }
+
+  return { indexed, failed };
 }

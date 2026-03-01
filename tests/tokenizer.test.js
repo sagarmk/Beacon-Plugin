@@ -45,13 +45,17 @@ describe('extractIdentifiers', () => {
 
 describe('prepareFTSQuery', () => {
   it('strips stop words and quotes tokens', () => {
+    // 3+ tokens returns tiered {andQuery, orQuery} object
     const result = prepareFTSQuery('how does the authentication flow work');
-    expect(result).toContain('"authentication"');
-    expect(result).toContain('"flow"');
-    expect(result).toContain('"work"');
-    expect(result).not.toContain('"how"');
-    expect(result).not.toContain('"does"');
-    expect(result).not.toContain('"the"');
+    expect(result).toHaveProperty('andQuery');
+    expect(result).toHaveProperty('orQuery');
+    expect(result.andQuery).toContain('"authentication"');
+    expect(result.andQuery).toContain('"flow"');
+    expect(result.andQuery).toContain('"work"');
+    expect(result.orQuery).toContain('"authentication"');
+    expect(result.orQuery).not.toContain('"how"');
+    expect(result.orQuery).not.toContain('"does"');
+    expect(result.orQuery).not.toContain('"the"');
   });
 
   it('returns null for all stop words', () => {
@@ -76,9 +80,13 @@ describe('prepareFTSQuery', () => {
     expect(result).not.toContain(':');
   });
 
-  it('joins tokens with OR', () => {
+  it('joins tokens with OR and expands synonyms', () => {
     const result = prepareFTSQuery('auth login');
-    expect(result).toBe('"auth" OR "login"');
+    // Now includes synonym expansion for "auth"
+    expect(result).toContain('"auth"');
+    expect(result).toContain('"login"');
+    expect(result).toContain('"authentication"');
+    expect(result).toContain('OR');
   });
 });
 

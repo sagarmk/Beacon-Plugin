@@ -43,7 +43,9 @@ try {
         : 'empty index';
       console.log(`Beacon: index unavailable (${reason}). Use grep for code search. Run /reindex to rebuild.`);
     } else if (syncStatus === 'in_progress') {
-      console.log(`Beacon: index sync in progress. Hybrid search may be incomplete. Prefer grep until sync finishes.`);
+      const completed = syncProgress.sync_completed_files || '?';
+      const total = syncProgress.sync_total_files || '?';
+      console.log(`Beacon: indexing ${completed}/${total} files — search results may be incomplete until sync finishes.`);
     } else {
       // Healthy — remind Claude to prefer Beacon
       const pluginRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');

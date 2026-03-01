@@ -13,6 +13,7 @@ import path from 'path';
 const args = process.argv.slice(2);
 let topKOverride = null;
 let thresholdOverride = null;
+let pathPrefix = null;
 const queries = [];
 
 for (let i = 0; i < args.length; i++) {
@@ -20,6 +21,8 @@ for (let i = 0; i < args.length; i++) {
     topKOverride = parseInt(args[++i], 10);
   } else if (args[i] === '--threshold' && args[i + 1]) {
     thresholdOverride = parseFloat(args[++i]);
+  } else if (args[i] === '--path' && args[i + 1]) {
+    pathPrefix = args[++i];
   } else if (args[i] === '--no-hybrid') {
     // handled after config load
   } else {
@@ -38,6 +41,47 @@ if (args.includes('--no-hybrid')) {
 }
 const topK = topKOverride ?? config.search.top_k;
 const threshold = thresholdOverride ?? config.search.similarity_threshold;
+
+/**
+ * Merge adjacent or overlapping chunk results from the same file into single entries.
+ * Takes formatted matches (with file, lines, similarity, score, preview).
+ */
+function mergeAdjacentChunks(matches) {
+  if (matches.length <= 1) return matches;
+
+  // Sort by file then start line for grouping
+  const sorted = matches.map(m => {
+    const [start, end] = m.lines.split('-').map(Number);
+    return { ...m, _start: start, _end: end };
+  }).sort((a, b) => a.file.localeCompare(b.file) || a._start - b._start);
+
+  const merged = [];
+  let current = sorted[0];
+
+  for (let i = 1; i < sorted.length; i++) {
+    const next = sorted[i];
+    // Merge if same file and adjacent/overlapping (within 5 lines gap)
+    if (next.file === current.file && next._start <= current._end + 5) {
+      current = {
+        ...current,
+        _end: Math.max(current._end, next._end),
+        lines: `${current._start}-${Math.max(current._end, next._end)}`,
+        score: current.score !== undefined ? String(Math.max(parseFloat(current.score), parseFloat(next.score)).toFixed(3)) : current.score,
+        similarity: String(Math.max(parseFloat(current.similarity), parseFloat(next.similarity)).toFixed(3)),
+        preview: current.preview, // keep the higher-scored chunk's preview
+      };
+    } else {
+      const { _start, _end, ...clean } = current;
+      merged.push(clean);
+      current = next;
+    }
+  }
+  const { _start, _end, ...clean } = current;
+  merged.push(clean);
+
+  // Re-sort by score descending
+  return merged.sort((a, b) => parseFloat(b.score || b.similarity) - parseFloat(a.score || a.similarity));
+}
 
 const dbPath = path.join(config.storage.path, 'embeddings.db');
 if (!existsSync(dbPath)) {
@@ -81,14 +125,14 @@ try {
     // FTS-only fallback
     const results = queries.map(query => ({
       query,
-      matches: db.ftsOnlySearch(query, topK).map(r => ({
+      matches: mergeAdjacentChunks(db.ftsOnlySearch(query, topK, pathPrefix).map(r => ({
         file: r.filePath,
         lines: `${r.startLine}-${r.endLine}`,
         similarity: '0.000',
         ...(r.score !== undefined ? { score: r.score.toFixed(3) } : {}),
         preview: r.chunkText.slice(0, 300),
         _note: r._note,
-      }))
+      })))
     }));
 
     if (queries.length === 1) {
@@ -100,13 +144,13 @@ try {
     // Normal hybrid/vector search
     const results = queries.map((query, i) => ({
       query,
-      matches: db.search(embeddings[i], topK, threshold, query, config).map(r => ({
+      matches: mergeAdjacentChunks(db.search(embeddings[i], topK, threshold, query, config, pathPrefix).map(r => ({
         file: r.filePath,
         lines: `${r.startLine}-${r.endLine}`,
         similarity: r.similarity.toFixed(3),
         ...(r.score !== undefined ? { score: r.score.toFixed(3) } : {}),
         preview: r.chunkText.slice(0, 300)
-      }))
+      })))
     }));
 
     // Single query → flat array (backwards compatible); multi-query → grouped by query

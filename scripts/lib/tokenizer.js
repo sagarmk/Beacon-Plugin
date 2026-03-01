@@ -59,8 +59,44 @@ export function extractIdentifiers(text) {
 }
 
 /**
+ * Common programming abbreviation synonyms for query expansion.
+ */
+const SYNONYMS = new Map([
+  ['auth', ['authentication', 'authorize', 'authorization', 'login']],
+  ['config', ['configuration', 'settings', 'preferences']],
+  ['db', ['database', 'sqlite', 'postgres', 'mysql']],
+  ['err', ['error', 'exception']],
+  ['fn', ['function', 'method']],
+  ['func', ['function', 'method']],
+  ['init', ['initialize', 'initialization', 'setup']],
+  ['msg', ['message']],
+  ['nav', ['navigation', 'navigate', 'router']],
+  ['param', ['parameter', 'argument']],
+  ['pkg', ['package']],
+  ['req', ['request']],
+  ['res', ['response']],
+  ['repo', ['repository']],
+  ['sync', ['synchronize', 'synchronization']],
+  ['util', ['utility', 'utilities', 'helper']],
+  ['utils', ['utility', 'utilities', 'helper']],
+  ['env', ['environment']],
+  ['middleware', ['interceptor', 'handler']],
+  ['api', ['endpoint', 'route']],
+]);
+
+/**
+ * Expand a token with synonyms from the SYNONYMS map.
+ */
+function expandWithSynonyms(token) {
+  const lower = token.toLowerCase();
+  const syns = SYNONYMS.get(lower);
+  return syns ? syns.map(s => `"${s}"`) : [];
+}
+
+/**
  * Convert a user query into an FTS5 MATCH expression.
- * Strips stop words, quotes tokens, joins with OR.
+ * Uses tiered strategy: AND-first for 3+ tokens, OR fallback.
+ * Strips stop words, quotes tokens, expands synonyms.
  * Returns null if the query is purely semantic (all stop words).
  */
 export function prepareFTSQuery(query) {
@@ -92,10 +128,25 @@ export function prepareFTSQuery(query) {
         }
       }
     }
+    // Query expansion: add synonyms
+    expanded.push(...expandWithSynonyms(token));
   }
 
   // Deduplicate
-  return [...new Set(expanded)].join(' OR ');
+  const unique = [...new Set(expanded)];
+
+  // Tiered strategy: 3+ tokens → AND-first (returns {andQuery, orQuery})
+  // Caller can try AND first, fall back to OR if no results
+  if (tokens.length >= 3) {
+    // AND query uses only the original tokens (not expanded synonyms)
+    const andTokens = [...new Set(tokens.map(t => `"${t}"`))];
+    return {
+      andQuery: andTokens.join(' AND '),
+      orQuery: unique.join(' OR '),
+    };
+  }
+
+  return unique.join(' OR ');
 }
 
 /**
