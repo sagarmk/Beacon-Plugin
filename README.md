@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="#quick-start">Quick Start</a> · <a href="#embedding-models">Models</a> · <a href="#commands">Commands</a> · <a href="#configuration">Config</a> · <a href="EXAMPLES.md">Examples</a>
+  <a href="#quick-start">Quick Start</a> · <a href="#usage">Usage</a> · <a href="#embedding-models">Models</a> · <a href="#commands">Commands</a> · <a href="#configuration">Config</a> · <a href="EXAMPLES.md">Examples</a>
 </p>
 
 ---
@@ -39,6 +39,90 @@ claude plugin install beacon@claude-code-beacon-plugin
 
 # Restart Claude Code — Beacon indexes automatically
 ```
+
+## Usage
+
+After installing, Beacon indexes automatically on session start. Here's the essentials:
+
+### Force a full re-index
+
+```
+> /reindex
+```
+
+Deletes existing embeddings and rebuilds from scratch — useful after switching models or if the index gets stale.
+
+### Check index health
+
+```
+> /index
+```
+
+```
+Beacon Index
+
+● ● ● ● ●    nomic-embed-text · Ollama (local)
+● ● ● ● ●    768 dims · 3.8 MB
+● ● ● ● ●
+● ● ● ● ●    Coverage: 100% (38/38 files)
+
+              Indexed by extension
+              ● .js  25 files
+              ● .md  13 files
+
+              Statistics
+              Indexed files    38
+              Total chunks     109
+              Avg chunks/file  2.9
+              Last sync        2 minutes ago
+```
+
+For a quick numeric summary:
+
+```
+> /index-status
+```
+
+```json
+{
+  "files_indexed": 38,
+  "total_chunks": 114,
+  "last_sync": "2026-03-01T04:30:21.453Z",
+  "embedding_model": "nomic-embed-text",
+  "embedding_endpoint": "http://localhost:11434/v1"
+}
+```
+
+### Search your codebase
+
+```
+> /search-code "authentication flow"
+```
+
+```json
+[
+  {
+    "file": "src/middleware/auth.ts",
+    "lines": "12-45",
+    "similarity": "0.82",
+    "score": "0.74",
+    "preview": "export async function verifyAuth(req, res, next) {\n  const token = req.headers.authorization?.split(' ')[1];\n  ..."
+  },
+  {
+    "file": "src/routes/login.ts",
+    "lines": "8-32",
+    "similarity": "0.78",
+    "score": "0.65",
+    "preview": "router.post('/login', async (req, res) => {\n  const { email, password } = req.body;\n  ..."
+  }
+]
+```
+
+Hybrid search combines **semantic similarity** (understands meaning), **BM25 keyword matching**, and **identifier boosting** — so searching "auth flow" finds code about authentication even if it never uses the word "auth".
+
+Options: `--top-k N` (results count), `--threshold F` (min score), `--path <dir>` (scope to directory), `--no-hybrid` (pure vector search).
+
+---
 
 ## Embedding Models
 
